@@ -107,9 +107,10 @@ gain a `signingAccountID`; existing credentials are re-homed, not recreated.
   2. Group apps by account id.
   3. `N ≤ 1` → existing single-group path (unchanged behaviour).
   4. `N > 1` → one child `RefreshGroup` per account (`child.context.accountID = id`),
-     run concurrently via `perform`; an **aggregate** group merges child results,
+     run sequentially via `perform`; an **aggregate** group merges child results,
      progress and `beginInstallationHandler`, and fires its `completionHandler` when
-     all children finish.
+     all children finish. Sequential groups avoid overlapping 2FA/certificate UI and
+     keep the MultiStore self-refresh last because reinstalling it may terminate the process.
 - Because each child has its own context/session/`error`, one account's failure only
   fails that child's apps — other accounts keep refreshing. Apps whose account is
   missing/credential-less fail only themselves with a clear error.

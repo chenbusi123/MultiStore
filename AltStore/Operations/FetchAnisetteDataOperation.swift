@@ -30,6 +30,12 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
     
     var mdLu: String?
     var deviceId: String?
+
+    /// Servers that responded to the health check but failed while generating anisette data.
+    /// Keeping this per operation lets one login transparently move to the next configured server
+    /// without permanently blacklisting a server after a transient failure.
+    private let serverFailoverLock = NSLock()
+    private var failedServerURLs = Set<String>()
     
     init(context: OperationContext) {
         self.context = context
@@ -90,6 +96,8 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
                 showToast(viewContext: viewContext, message: errmsg)
                 continue
             }
+
+            guard !self.hasFailedAnisetteServer(url.absoluteString) else { continue }
 
             let success = try await pingServer(url)
             if success {
@@ -165,7 +173,17 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
                             }
                         }
                         return
-                    } else { throw OperationError.anisetteV3Error(message: message ?? "Unknown error") }
+                    }
+                    else if let message = message,
+                            message.contains("-45054"),
+                            self.retryWithNextAnisetteServer(after: message)
+                    {
+                        return
+                    }
+                    else
+                    {
+                        throw OperationError.anisetteV3Error(message: self.actionableAnisetteMessage(message ?? "Unknown error"))
+                    }
                 }
             }
             
@@ -358,7 +376,14 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
                 default:
                     if result.contains("Error") || result.contains("Invalid") || result == "ClosingPerRequest" || result == "Timeout" || result == "TextOnly" {
                         self.debugLog("Failing because of \(result)")
-                        self.finish(.failure(OperationError.provisioningError(result: result, message: json["message"] as? String)))
+                        let message = json["message"] as? String
+                        if let message = message,
+                           message.contains("-45054"),
+                           self.retryWithNextAnisetteServer(after: message, disconnecting: client)
+                        {
+                            return
+                        }
+                        self.finish(.failure(OperationError.provisioningError(result: result, message: self.actionableAnisetteMessage(message))))
                     }
                 }
             }
@@ -366,6 +391,53 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
             self.debugLog("Failed to handle text: \(error.localizedDescription)")
             self.finish(.failure(OperationError.provisioningError(result: error.localizedDescription, message: nil)))
         }
+    }
+
+    /// ADI error -45054 is a filesystem failure inside the selected anisette server, not an
+    /// Apple-account rejection. A simple HTTP ping cannot detect it, so transparently retry the
+    /// login with the next configured server. If there is no alternative, retain the original
+    /// error and add a precise recovery instruction instead of asking the user to retry blindly.
+    private func retryWithNextAnisetteServer(after message: String, disconnecting client: WebSocketClient? = nil) -> Bool {
+        guard message.contains("-45054"), let failedURL = self.url?.absoluteString else { return false }
+
+        self.serverFailoverLock.lock()
+        let wasInserted = self.failedServerURLs.insert(failedURL).inserted
+        let configuredServers = UserDefaults.standard.menuAnisetteServersList
+        let hasAlternative = configuredServers.contains { candidate in
+            guard let url = URL(string: candidate) else { return false }
+            return !self.failedServerURLs.contains(url.absoluteString)
+        }
+        self.serverFailoverLock.unlock()
+
+        // Ignore duplicate callbacks from the failed WebSocket while its replacement is starting.
+        guard wasInserted else { return true }
+        guard hasAlternative else { return false }
+
+        self.debugLog("Anisette server \(failedURL) returned filesystem error -45054; trying the next configured server.")
+        client?.disconnect(closeCode: 0)
+
+        Task {
+            do {
+                try await self.execute()
+            }
+            catch
+            {
+                self.finish(.failure(error))
+            }
+        }
+        return true
+    }
+
+    private func hasFailedAnisetteServer(_ url: String) -> Bool {
+        self.serverFailoverLock.lock()
+        defer { self.serverFailoverLock.unlock() }
+        return self.failedServerURLs.contains(url)
+    }
+
+    private func actionableAnisetteMessage(_ message: String?) -> String? {
+        guard let message = message else { return nil }
+        guard message.contains("-45054") else { return message }
+        return message + " The selected Anisette server has a server-side storage error. Select a different Anisette V3 server or repair that server's provisioning-data permissions."
     }
     
     private func handleGiveStartProvisioningData(client: WebSocketClient) {

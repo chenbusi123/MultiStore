@@ -274,6 +274,48 @@ public extension Keychain
         return self.credentials(forAccount: accountID).canAuthenticate
     }
 
+    /// Decode the persisted signing certificate for one account. Passing `nil` reads the legacy
+    /// global/default-account slot. Archives produced by different SideStore versions used the
+    /// stored machine identifier, an empty password, or no password, so try all three formats.
+    func storedSigningCertificate(forAccount accountID: String?) -> ALTCertificate?
+    {
+        let credentials: AccountCredentials
+        if let accountID = accountID
+        {
+            credentials = self.credentials(forAccount: accountID)
+        }
+        else
+        {
+            credentials = AccountCredentials(
+                signingCertificate: self.signingCertificate,
+                signingCertificatePassword: self.signingCertificatePassword
+            )
+        }
+
+        guard let data = credentials.signingCertificate else { return nil }
+
+        let certificate: ALTCertificate?
+        if let password = credentials.signingCertificatePassword,
+           let decoded = try? ALTCertificate(p12Data: data, password: password)
+        {
+            certificate = decoded
+        }
+        else if let decoded = try? ALTCertificate(p12Data: data, password: "")
+        {
+            certificate = decoded
+        }
+        else
+        {
+            certificate = try? ALTCertificate(p12Data: data, password: nil)
+        }
+
+        if certificate?.machineIdentifier == nil
+        {
+            certificate?.machineIdentifier = credentials.signingCertificatePassword
+        }
+        return certificate
+    }
+
     // MARK: In-memory per-account session cache
 
     func cachedSession(forAccount accountID: String) -> ALTAppleAPISession?
