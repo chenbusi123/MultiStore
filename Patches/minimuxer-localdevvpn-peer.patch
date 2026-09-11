@@ -1,0 +1,20 @@
+diff --git a/Sources/Services/NetworkIfaceScanner.swift b/Sources/Services/NetworkIfaceScanner.swift
+--- a/Sources/Services/NetworkIfaceScanner.swift
++++ b/Sources/Services/NetworkIfaceScanner.swift
+@@ -76,6 +76,15 @@ internal struct NetInfo: Hashable, CustomStringConvertible, Sendable {
+     }
+ 
+     var derivedPeer: String? {
+         guard let peer = reportedPeer, peer == hostIP else { return nil }
++
++        // LocalDevVPN's current Remote Pairing profile exposes two /32 routes:
++        // 10.7.1.1 is the local tunnel interface and 10.7.0.1 is the device.
++        // A /32 has no adjacent host, so deriving host + 1 produces 10.7.1.2,
++        // which is not routed and makes UDID discovery fail.
++        if maskIP == "255.255.255.255", hostIP == "10.7.1.1" {
++            return "10.7.0.1"
++        }
++
+         let netBase = host & mask
+         let firstHost = netBase + 1
+         if firstHost != host {
