@@ -1,7 +1,7 @@
 default: build			# default target for the "make" command
 
 SHELL := /bin/bash
-.PHONY: help ios update tvos prepare-altsign
+.PHONY: help ios update tvos prepare-altsign prepare-em-proxy prepare-dependencies
 
 RUBY := $(shell command -v ruby 2>/dev/null)
 HOMEBREW := $(shell command -v brew 2>/dev/null)
@@ -192,13 +192,18 @@ endif
 prepare-altsign:
 	@./scripts/apply-altsign-login-fix.sh
 
-build: prepare-altsign
+prepare-em-proxy:
+	@./scripts/apply-em-proxy-build-fix.sh
+
+prepare-dependencies: prepare-altsign prepare-em-proxy
+
+build: prepare-dependencies
 	@echo ">>>>>>>>> BUILD_CONFIG is set to '$(BUILD_CONFIG)', Building for $(BUILD_CONFIG) mode! <<<<<<<<<<"
 	@echo ""
 	@xcodebuild archive -archivePath ./SideStore \
 		$(COMMON_BUILD_SETTINGS)
 
-build-and-test: prepare-altsign
+build-and-test: prepare-dependencies
 	@rm -rf build/tests/test-results.xcresult
 	@echo ">>>>>>>>> BUILD_CONFIG is set to '$(BUILD_CONFIG)', Building for $(BUILD_CONFIG) mode! <<<<<<<<<<"
 	@echo ""
@@ -209,7 +214,7 @@ build-and-test: prepare-altsign
     	-enableCodeCoverage YES \
 		$(COMMON_BUILD_SETTINGS)
 
-build-tests: prepare-altsign
+build-tests: prepare-dependencies
 	@rm -rf build/tests/test-results.xcresult
 	@echo ">>>>>>>>> BUILD_CONFIG is set to '$(BUILD_CONFIG)', Building Tests for $(BUILD_CONFIG) mode! <<<<<<<<<<"
 	@echo ""
