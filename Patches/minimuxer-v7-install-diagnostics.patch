@@ -1,0 +1,51 @@
+diff --git a/Sources/IdeviceGateway.swift b/Sources/IdeviceGateway.swift
+index 7a27966..02dae35 100644
+--- a/Sources/IdeviceGateway.swift
++++ b/Sources/IdeviceGateway.swift
+@@ -888,9 +888,24 @@ internal final class IdeviceGateway {
+                 verboseLog("[IdeviceGateway] installIpa() calling installation_proxy_install for path: \(path)")
+                 let installErr = installation_proxy_install(client, pathPtr, nil)
+                 if let installErr = installErr {
+-                    debugLog("[IdeviceGateway] installIpa() installation_proxy_install failed")
++                    let ffiError = installErr.pointee
++                    let code = ffiError.code
++                    let subCode = ffiError.sub_code
++                    let message: String
++                    if let messagePointer = ffiError.message {
++                        message = String(cString: messagePointer)
++                    } else {
++                        message = "No error message returned by installation service"
++                    }
++
++                    debugLog(
++                        "[IdeviceGateway][InstallDiagnostic] installation_proxy_install failed " +
++                        "code=\(code) subCode=\(subCode) message=\(message)"
++                    )
+                     defer { idevice_error_free(installErr) }
+-                    throw IdeviceGatewayError.serviceError("Failed to install IPA")
++                    throw IdeviceGatewayError.serviceError(
++                        "Failed to install IPA (code \(code), subCode \(subCode)): \(message)"
++                    )
+                 }
+                 debugLog("[IdeviceGateway] installIpa() installation_proxy_install succeeded")
+             }
+diff --git a/Sources/Services/NetworkIfaceScanner.swift b/Sources/Services/NetworkIfaceScanner.swift
+index 5d4193c..dd6fd5b 100644
+--- a/Sources/Services/NetworkIfaceScanner.swift
++++ b/Sources/Services/NetworkIfaceScanner.swift
+@@ -78,6 +78,15 @@ internal struct NetInfo: Hashable, CustomStringConvertible, Sendable {
+ 
+     var derivedPeer: String? {
+         guard let peer = reportedPeer, peer == hostIP else { return nil }
++
++        // LocalDevVPN's current Remote Pairing profile exposes two /32 routes:
++        // 10.7.1.1 is the local tunnel interface and 10.7.0.1 is the device.
++        // A /32 has no adjacent host, so deriving host + 1 produces 10.7.1.2,
++        // which is not routed and makes UDID discovery fail.
++        if maskIP == "255.255.255.255", hostIP == "10.7.1.1" {
++            return "10.7.0.1"
++        }
++
+         let netBase = host & mask
+         let firstHost = netBase + 1
+         if firstHost != host {

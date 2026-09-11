@@ -1,0 +1,13 @@
+diff --git a/em_proxy.xcodeproj/project.pbxproj b/em_proxy.xcodeproj/project.pbxproj
+index 1ee31ec..b1b90f3 100644
+--- a/em_proxy.xcodeproj/project.pbxproj
++++ b/em_proxy.xcodeproj/project.pbxproj
+@@ -24,7 +24,7 @@
+ 				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)",
+ 				"$(PROJECT_DIR)/em_proxy.h",
+ 			);
+-			script = "# generated with cargo-xcode 1.5.0\n# modified to use prebuilt binaries\n\nset -eu;\n\nBUILT_SRC=\"./$LIB_FILE_NAME.a\"\necho Generating Static lib: $BUILT_SRC\nln -f -- \"$BUILT_SRC\" \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\" || cp \"$BUILT_SRC\" \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\necho \"$BUILT_SRC -> $TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
++			script = "# generated with cargo-xcode 1.5.0\n# modified to use prebuilt binaries\n\nset -eu;\n\nBUILT_SRC=\"./$LIB_FILE_NAME.a\"\necho Generating Static lib: $BUILT_SRC\ncp \"$BUILT_SRC\" \"$TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\necho \"$BUILT_SRC -> $TARGET_BUILD_DIR/$EXECUTABLE_PATH\"\n";
+ 		};
+ /* End PBXBuildRule section */
+ 

@@ -867,39 +867,50 @@ extension AppManager
     }
 
     /// Run each account's apps in its own authenticated `RefreshGroup`, merging results, progress
-    /// and installation callbacks back into `aggregateGroup`. Each child authenticates
-    /// independently, so a failure in one account is isolated to that account's apps.
+    /// and installation callbacks back into `aggregateGroup`. Account groups run sequentially:
+    /// this prevents overlapping 2FA/certificate UI and guarantees the group containing
+    /// MultiStore itself runs last (its installation can terminate the current process). A
+    /// failure in one account still advances to the next account, preserving failure isolation.
     private func refresh(partitions: [(accountID: String?, apps: [InstalledApp])], presentingViewController: UIViewController?, aggregateGroup: RefreshGroup)
     {
+        let orderedPartitions = partitions.sorted { lhs, rhs in
+            let lhsContainsSelf = lhs.apps.contains { $0.bundleIdentifier == StoreApp.altstoreAppID }
+            let rhsContainsSelf = rhs.apps.contains { $0.bundleIdentifier == StoreApp.altstoreAppID }
+            return !lhsContainsSelf && rhsContainsSelf
+        }
+
         let lock = NSLock()
-        var remaining = partitions.count
         var didComplete = false
+        var nextPartitionIndex = 0
         var merged = [String: Result<InstalledApp, Error>]()
 
-        func childFinished(_ results: [String: Result<InstalledApp, Error>])
+        func finishAggregateIfNeeded()
         {
             lock.lock()
-            for (bundleID, result) in results
-            {
-                merged[bundleID] = result
-                aggregateGroup.set(result, forAppWithBundleIdentifier: bundleID)
-            }
-            remaining -= 1
-            let isDone = (remaining <= 0) && !didComplete
-            if isDone { didComplete = true }
+            let shouldFinish = !didComplete
+            if shouldFinish { didComplete = true }
             let snapshot = merged
             lock.unlock()
 
-            // Fire the aggregate completion exactly once — a background refresh resumes a
-            // continuation here, so a double-invocation would be fatal.
-            if isDone
+            if shouldFinish
             {
                 aggregateGroup.completionHandler?(snapshot)
             }
         }
 
-        for partition in partitions
+        func runNextPartition()
         {
+            lock.lock()
+            guard nextPartitionIndex < orderedPartitions.count else
+            {
+                lock.unlock()
+                finishAggregateIfNeeded()
+                return
+            }
+            let partition = orderedPartitions[nextPartitionIndex]
+            nextPartitionIndex += 1
+            lock.unlock()
+
             let childGroup = RefreshGroup()
             childGroup.context.accountID = partition.accountID
 
@@ -913,8 +924,27 @@ extension AppManager
                 aggregateGroup?.beginInstallationHandler?(installedApp)
             }
 
+            let childCompletionLock = NSLock()
+            var didFinishChild = false
             childGroup.completionHandler = { results in
-                childFinished(results)
+                childCompletionLock.lock()
+                guard !didFinishChild else
+                {
+                    childCompletionLock.unlock()
+                    return
+                }
+                didFinishChild = true
+                childCompletionLock.unlock()
+
+                lock.lock()
+                for (bundleID, result) in results
+                {
+                    merged[bundleID] = result
+                    aggregateGroup.set(result, forAppWithBundleIdentifier: bundleID)
+                }
+                lock.unlock()
+
+                runNextPartition()
             }
 
             aggregateGroup.progress.totalUnitCount += 1
@@ -931,6 +961,8 @@ extension AppManager
                 }
             }
         }
+
+        runNextPartition()
     }
     
     func activate(_ installedApp: InstalledApp, presentingViewController: UIViewController?, completionHandler: @escaping (Result<InstalledApp, Error>) -> Void)
@@ -1775,7 +1807,7 @@ private extension AppManager
         context.app = ALTApplication(fileURL: app.fileURL)
         context.useMainProfile = app.useMainProfile
 
-        let activeSerial = group.context.certificate?.serialNumber ?? (Keychain.shared.signingCertificate.flatMap { try? ALTCertificate(p12Data: $0, password: nil) }?.serialNumber)
+        let activeSerial = group.context.certificate?.serialNumber ?? Keychain.shared.storedSigningCertificate(forAccount: group.context.accountID)?.serialNumber
         if let activeSerial = activeSerial,
            let appSerial = app.certificateSerialNumber,
            activeSerial != appSerial

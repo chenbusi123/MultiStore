@@ -147,7 +147,7 @@ final class AuthenticationOperation: ResultOperation<(ALTTeam, ALTCertificate?, 
                 
                 let certificate: ALTCertificate?
                 if self.skipCertificateProvisioning {
-                    certificate = Keychain.shared.signingCertificate.flatMap { try? ALTCertificate(p12Data: $0, password: nil) }
+                    certificate = self.localSigningCertificate()
                 } else {
                     certificate = try await self.fetchCertificate(for: team, session: session)
                     self.context.certificate = certificate
@@ -235,11 +235,10 @@ final class AuthenticationOperation: ResultOperation<(ALTTeam, ALTCertificate?, 
 
             let resolvedAccountID = self.context.accountID ?? altTeam.account.identifier
 
-            // Only (re)designate the default account/team when this is an interactive/default
-            // authentication (accountID == nil, e.g. sign-in or "add account"). A targeted refresh
-            // of a specific account must NOT change which account is the default for new installs,
-            // nor deactivate the other accounts — they must keep refreshing independently.
-            if self.context.accountID == nil {
+            // Only (re)designate the default account/team when this is a normal interactive/default
+            // authentication. Adding a secondary account and targeted refreshes must NOT change
+            // which account is the default for new installs or deactivate the other accounts.
+            if self.context.accountID == nil && self.context.updatesDefaultAccount {
                 // Account
                 account.isActiveAccount = true
 
@@ -559,30 +558,33 @@ final class AuthenticationOperation: ResultOperation<(ALTTeam, ALTCertificate?, 
     private func fetchCertificate(for team: ALTTeam, session: ALTAppleAPISession) async throws -> ALTCertificate {
         let certificates = try await ALTAppleAPI.shared.fetchCertificates(for: team, session: session)
         self.activeCertificates = certificates
+
+        let embeddedCertificateID = Bundle.main.object(forInfoDictionaryKey: Bundle.Info.certificateID) as? String
+        let embeddedCertificateExists = FileManager.default.fileExists(atPath: Bundle.main.certificateURL.path)
+        debugLog("[CertificateBootstrap] remote=\(certificates.count) keychain=\(self.localSigningCertificate() != nil) embeddedID=\(embeddedCertificateID != nil) embeddedP12=\(embeddedCertificateExists)")
         
-        if let data = Keychain.shared.signingCertificate {
-            let localWithNil = try? ALTCertificate(p12Data: data, password: nil)
-            let localWithEmpty = try? ALTCertificate(p12Data: data, password: "")
-            
-            if let localCertificate = localWithNil ?? localWithEmpty,
-               let certificate = certificates.first(where: { $0.serialNumber == localCertificate.serialNumber }) {
+        if let localCertificate = self.localSigningCertificate(),
+           let certificate = certificates.first(where: { $0.serialNumber == localCertificate.serialNumber }) {
                 localCertificate.machineIdentifier = certificate.machineIdentifier
+                debugLog("[CertificateBootstrap] source=keychain result=matched")
                 return localCertificate
-            }
         }
         
-        if let serialNumber = Bundle.main.object(forInfoDictionaryKey: Bundle.Info.certificateID) as? String {
+        if let serialNumber = embeddedCertificateID {
             if let certificate = certificates.first(where: { $0.serialNumber == serialNumber }) {
-                let fileExists = FileManager.default.fileExists(atPath: Bundle.main.certificateURL.path)
-                if fileExists,
+                if embeddedCertificateExists,
                    let data = try? Data(contentsOf: Bundle.main.certificateURL) {
                     let machineIdentifier = certificate.machineIdentifier
                     let localCertificate = try? ALTCertificate(p12Data: data, password: machineIdentifier)
                     if let localCertificate = localCertificate {
                         localCertificate.machineIdentifier = machineIdentifier
+                        debugLog("[CertificateBootstrap] source=embeddedP12 result=matched")
                         return localCertificate
                     }
+                    debugLog("[CertificateBootstrap] source=embeddedP12 result=parseFailed")
                 }
+            } else {
+                debugLog("[CertificateBootstrap] source=embeddedID result=remoteCertificateMissing")
             }
         }
         
@@ -782,6 +784,17 @@ final class AuthenticationOperation: ResultOperation<(ALTTeam, ALTCertificate?, 
     @MainActor
     private func showRefreshScreenIfNecessary(signer: ALTSigner, session: ALTAppleAPISession) async -> Bool {
         guard let application = ALTApplication(fileURL: Bundle.main.bundleURL), let provisioningProfile = application.provisioningProfile else { return false }
+
+        // A targeted secondary-account authentication is expected to use a different team from
+        // the one that signed the running MultiStore installation. Comparing those certificates
+        // produced a false mismatch prompt and, when accepted, attempted to re-sign MultiStore
+        // with the secondary account. Only the running app's own team may validate/re-sign it.
+        if provisioningProfile.teamIdentifier != signer.team.identifier,
+           (self.context.accountID != nil || !self.context.updatesDefaultAccount)
+        {
+            self.debugLog("[Authentication] Skipping self-sign validation for secondary team \(signer.team.identifier); running team is \(provisioningProfile.teamIdentifier).")
+            return false
+        }
         
         let result = SigningCertificateValidator.validate(
             runningProfile: provisioningProfile,
@@ -873,12 +886,19 @@ private extension AuthenticationOperation {
         }
     }
 
+    /// The certificate persisted for the account targeted by this authentication. A forced
+    /// "Add Account" login must never borrow the default account's certificate.
+    func localSigningCertificate() -> ALTCertificate? {
+        guard !self.context.ignoresCachedCredentials else { return nil }
+        return Keychain.shared.storedSigningCertificate(forAccount: self.targetAccountID)
+    }
+
     /// Cache the authenticated session/certificate/team for `accountID` (and mirror to the global
     /// cache for the default/interactive flow so legacy code keeps working).
     func cacheAuthState(session: ALTAppleAPISession, certificate: ALTCertificate?, team: ALTTeam, accountID: String) {
         Keychain.shared.cache(session: session, certificate: certificate, team: team, forAccount: accountID)
 
-        if self.targetAccountID == nil {
+        if self.targetAccountID == nil && self.context.updatesDefaultAccount {
             Keychain.shared.session = session
             Keychain.shared.certificate = certificate
             Keychain.shared.team = team
@@ -892,7 +912,7 @@ private extension AuthenticationOperation {
             credentials.adsid = adsid
             credentials.xcodeToken = xcodeToken
             Keychain.shared.setCredentials(credentials, forAccount: accountID)
-        } else {
+        } else if self.context.updatesDefaultAccount {
             Keychain.shared.appleIDAdsid = adsid
             Keychain.shared.appleIDXcodeToken = xcodeToken
         }
@@ -909,7 +929,7 @@ private extension AuthenticationOperation {
         if let xcodeToken = xcodeToken { credentials.xcodeToken = xcodeToken }
         Keychain.shared.setCredentials(credentials, forAccount: accountID)
 
-        if self.targetAccountID == nil {
+        if self.targetAccountID == nil && self.context.updatesDefaultAccount {
             Keychain.shared.appleIDEmailAddress = emailAddress
             if let password = password {
                 Keychain.shared.appleIDPassword = password
@@ -927,7 +947,7 @@ private extension AuthenticationOperation {
         credentials.signingCertificatePassword = password
         Keychain.shared.setCredentials(credentials, forAccount: accountID)
 
-        if self.targetAccountID == nil {
+        if self.targetAccountID == nil && self.context.updatesDefaultAccount {
             Keychain.shared.signingCertificate = p12Data
             Keychain.shared.signingCertificatePassword = password
         }

@@ -1,0 +1,131 @@
+diff --git a/Sources/ALTAppleAPI+Authentication.swift b/Sources/ALTAppleAPI+Authentication.swift
+index a96e198..9dc4ea0 100644
+--- a/Sources/ALTAppleAPI+Authentication.swift
++++ b/Sources/ALTAppleAPI+Authentication.swift
+@@ -17,9 +17,9 @@ public extension ALTAppleAPI
+                             verificationHandler: ((@escaping (String?) -> Void) -> Void)?,
+                             completionHandler: @escaping (ALTAccount?, ALTAppleAPISession?, Error?) -> Void) {
+         // Authenticating only works with lowercase email address, even if Apple ID contains capital letters.
+-        let sanitizedAppleID = unsanitizedAppleID.lowercased()
++        let sanitizedAppleID = unsanitizedAppleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+-        debugLog("[AltSign] Starting authenticate for Apple ID: \(sanitizedAppleID)")
++        debugLog("[AltSign] Starting authenticate.")
+
+         do {
+             let clientDictionary = [
+@@ -469,13 +469,15 @@ private extension ALTAppleAPI {
+                 "Request": requestParameters
+             ]
+
+-            verboseLog("[AltSign] sendAuthenticationRequest payload: \(parameters)")
++            let operation = requestParameters["o"] as? String ?? "unknown"
++            verboseLog("[AltSign] sendAuthenticationRequest operation: \(operation)")
+
+             let httpHeaders = [
+                 "Content-Type": "text/x-xml-plist",
+                 "X-MMe-Client-Info": anisetteData.deviceDescription,
+                 "Accept": "*/*",
+-                "User-Agent": "akd/1.0 CFNetwork/978.0.7 Darwin/18.7.0"
++                "User-Agent": "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)",
++                "Connection": "close"
+             ]
+
+             let bodyData = try PropertyListSerialization.data(fromPropertyList: parameters, format: .xml, options: 0)
+@@ -491,21 +493,51 @@ private extension ALTAppleAPI {
+                     if let error {
+                         verboseLog("[AltSign] sendAuthenticationRequest failed with error: \(error)")
+                     }
+-                    guard let data = data else { throw error ?? ALTAppleAPIError.unknown }
++                    guard let data = data, !data.isEmpty else {
++                        throw error ?? self.authenticationResponseError(
++                            statusCode: (response as? HTTPURLResponse)?.statusCode,
++                            contentType: (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"),
++                            byteCount: data?.count ?? 0,
++                            reason: "Apple returned an empty response."
++                        )
++                    }
++
++                    let httpResponse = response as? HTTPURLResponse
++                    let statusCode = httpResponse?.statusCode
++                    let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type")
++                    debugLog("[AltSign][GSADiagnostic] status=\(statusCode.map { String($0) } ?? "unknown") contentType=\(contentType ?? "missing") bytes=\(data.count)")
+
+-                    guard let responseDictionary = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+-                          let dictionary = responseDictionary["Response"] as? [String: Any],
++                    guard let responseDictionary = self.parsePlistOrJSON(data),
++                          let dictionary = responseDictionary["Response"] as? [String: Any]
++                            ?? responseDictionary["response"] as? [String: Any]
++                            ?? (responseDictionary["Status"] != nil ? responseDictionary : nil),
+                           let status = dictionary["Status"] as? [String: Any]
++                            ?? dictionary["status"] as? [String: Any]
+                     else {
+-                        verboseLog("[AltSign] sendAuthenticationRequest response is invalid or could not be parsed: \(String(data: data, encoding: .utf8) ?? "unable to decode")")
+-                        throw URLError(.badServerResponse)
++                        debugLog("[AltSign][GSADiagnostic] invalidResponseFormat=true")
++                        throw self.authenticationResponseError(
++                            statusCode: statusCode,
++                            contentType: contentType,
++                            byteCount: data.count,
++                            reason: "The response was neither a supported property list nor JSON authentication response."
++                        )
+                     }
+
+                     verboseLog("[AltSign] sendAuthenticationRequest response Status: \(status)")
+-                    verboseLog("[AltSign] sendAuthenticationRequest response Data: \(dictionary)")
++                    verboseLog("[AltSign] sendAuthenticationRequest response keys: \(dictionary.keys.sorted())")
+
+                     let errorCode = status["ec"] as? Int ?? 0
+-                    guard errorCode != 0 else { return completionHandler(.success(dictionary)) }
++                    guard errorCode != 0 else {
++                        if let statusCode, !(200...299).contains(statusCode) {
++                            throw self.authenticationResponseError(
++                                statusCode: statusCode,
++                                contentType: contentType,
++                                byteCount: data.count,
++                                reason: "Apple returned an unsuccessful HTTP status."
++                            )
++                        }
++                        return completionHandler(.success(dictionary))
++                    }
+
+                     verboseLog("[AltSign] sendAuthenticationRequest status returned error code: \(errorCode)")
+
+@@ -557,7 +589,8 @@ private extension ALTAppleAPI {
+             "X-MMe-Client-Info": anisetteData.deviceDescription,
+             "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
+             "X-Apple-Locale": anisetteData.locale.identifier,
+-            "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST"
++            "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST",
++            "Connection": "close"
+         ]
+
+         var request = URLRequest(url: url)
+@@ -567,6 +600,27 @@ private extension ALTAppleAPI {
+     }
+ }
+
++private extension ALTAppleAPI {
++    func parsePlistOrJSON(_ data: Data) -> [String: Any]? {
++        (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
++            ?? (try? JSONSerialization.jsonObject(with: data, options: [])) as? [String: Any]
++    }
++
++    func authenticationResponseError(statusCode: Int?, contentType: String?, byteCount: Int, reason: String) -> NSError {
++        let status = statusCode.map { String($0) } ?? "unknown"
++        return NSError(
++            domain: "AltSign.AuthenticationResponse",
++            code: statusCode ?? URLError.badServerResponse.rawValue,
++            userInfo: [
++                NSLocalizedDescriptionKey: "Apple login server returned an unexpected response (HTTP \(status)). Please try again.",
++                NSLocalizedFailureReasonErrorKey: reason,
++                "ALTResponseContentType": contentType ?? "missing",
++                "ALTResponseByteCount": byteCount
++            ]
++        )
++    }
++}
++
+ // MARK: - Data decryption helpers (used only within this file)
+
+ private extension Data {

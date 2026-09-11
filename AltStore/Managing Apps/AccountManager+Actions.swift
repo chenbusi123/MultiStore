@@ -18,13 +18,14 @@ extension AccountManager
 {
     /// Add a new Apple account by presenting the sign-in UI, forcing a fresh login so a *new*
     /// Apple ID can be entered rather than silently re-authenticating the current account. The
-    /// newly added account becomes the default account for new installs. Returns the resolved
-    /// `Account` (a view-context object) on success.
+    /// existing default account is preserved; the user can explicitly make the new account the
+    /// default afterwards. Returns the resolved `Account` (a view-context object) on success.
     @discardableResult
     func addAccount(presentingViewController: UIViewController, completionHandler: @escaping (Result<Account, Error>) -> Void) -> AuthenticationOperation
     {
         let context = AuthenticatedOperationContext()
         context.ignoresCachedCredentials = true
+        context.updatesDefaultAccount = false
 
         return AppManager.shared.authenticate(presentingViewController: presentingViewController, context: context, skipDeviceRegistration: false) { result in
             switch result
@@ -89,6 +90,15 @@ extension AccountManager
     func changeSigningAccount(for installedApp: InstalledApp, to accountID: String, presentingViewController: UIViewController?, completionHandler: @escaping (Result<InstalledApp, Error>) -> Void)
     {
         let bundleIdentifier = installedApp.bundleIdentifier
+        var previousAccountID: String?
+        var previousTeamID: String?
+        var previousNeedsResign = false
+        installedApp.managedObjectContext?.performAndWait {
+            previousAccountID = installedApp.signingAccountID
+            previousTeamID = installedApp.team?.identifier
+            previousNeedsResign = installedApp.needsResign
+        }
+
         let context = DatabaseManager.shared.persistentContainer.newBackgroundContext()
         context.performAndWait {
             guard self.assignAccount(accountID, toAppWithBundleIdentifier: bundleIdentifier, in: context) else {
@@ -105,7 +115,64 @@ extension AccountManager
             DispatchQueue.main.async {
                 // Re-sign with the newly-assigned account (inferred from the app's signingAccountID).
                 let app = DatabaseManager.shared.viewContext.object(with: installedApp.objectID) as? InstalledApp ?? installedApp
-                _ = AppManager.shared.resign(app, presentingViewController: presentingViewController, completionHandler: completionHandler)
+                _ = AppManager.shared.resign(app, presentingViewController: presentingViewController) { result in
+                    switch result
+                    {
+                    case .success:
+                        completionHandler(result)
+
+                    case .failure(let error):
+                        // Reassignment is only real after the replacement signature installs.
+                        // Restore the old mapping if authentication, signing, or installation
+                        // fails so future refreshes do not use an account that never signed it.
+                        self.restoreSigningAssignment(
+                            forBundleIdentifier: bundleIdentifier,
+                            accountID: previousAccountID,
+                            teamID: previousTeamID,
+                            needsResign: previousNeedsResign
+                        ) { restoreResult in
+                            switch restoreResult
+                            {
+                            case .success: completionHandler(.failure(error))
+                            case .failure(let restoreError): completionHandler(.failure(restoreError))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func restoreSigningAssignment(forBundleIdentifier bundleIdentifier: String,
+                                          accountID: String?,
+                                          teamID: String?,
+                                          needsResign: Bool,
+                                          completionHandler: @escaping (Result<Void, Error>) -> Void)
+    {
+        DatabaseManager.shared.persistentContainer.performBackgroundTask { context in
+            do
+            {
+                let predicate = NSPredicate(format: "%K == %@", #keyPath(InstalledApp.bundleIdentifier), bundleIdentifier)
+                guard let app = InstalledApp.first(satisfying: predicate, in: context) else {
+                    throw OperationError.appNotFound(name: bundleIdentifier)
+                }
+
+                app.signingAccountID = accountID
+                if let teamID = teamID
+                {
+                    app.team = Team.first(satisfying: NSPredicate(format: "%K == %@", #keyPath(Team.identifier), teamID), in: context)
+                }
+                else
+                {
+                    app.team = nil
+                }
+                app.needsResign = needsResign
+                try context.save()
+                DispatchQueue.main.async { completionHandler(.success(())) }
+            }
+            catch
+            {
+                DispatchQueue.main.async { completionHandler(.failure(error)) }
             }
         }
     }

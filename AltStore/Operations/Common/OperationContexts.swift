@@ -58,6 +58,13 @@ final class AuthenticatedOperationContext: OperationContext
     /// instead of silently re-authenticating the existing default account.
     var ignoresCachedCredentials: Bool = false
 
+    /// Whether a successful interactive authentication should replace the default account.
+    ///
+    /// Normal sign-in keeps the legacy behaviour (`true`). The multi-account "Add Account"
+    /// flow sets this to `false`, so adding a secondary account cannot overwrite the default
+    /// account's global compatibility credentials or trigger a self re-sign with the new team.
+    var updatesDefaultAccount: Bool = true
+
     weak var authenticationOperation: AuthenticationOperation?
 
     convenience init(context: AuthenticatedOperationContext)
@@ -69,6 +76,7 @@ final class AuthenticatedOperationContext: OperationContext
         self.certificate = context.certificate
         self.accountID = context.accountID
         self.ignoresCachedCredentials = context.ignoresCachedCredentials
+        self.updatesDefaultAccount = context.updatesDefaultAccount
         self.authenticationOperation = context.authenticationOperation
     }
 }
