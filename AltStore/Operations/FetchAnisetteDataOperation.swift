@@ -185,7 +185,7 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
                     }
                     else
                     {
-                        throw OperationError.anisetteV3Error(message: self.actionableAnisetteMessage(message ?? "Unknown error"))
+                        throw OperationError.anisetteV3Error(message: self.actionableAnisetteMessage(message) ?? "Unknown error")
                     }
                 }
             }
