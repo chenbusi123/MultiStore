@@ -45,8 +45,8 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Apply LocalDevVPN peer compatibility fix
-        run: git -C Dependencies/minimuxer apply ../../Patches/minimuxer-localdevvpn-peer.patch
+      - name: Apply LocalDevVPN and install diagnostics fixes
+        run: git -C Dependencies/minimuxer apply ../../Patches/minimuxer-v7-install-diagnostics.patch
 
       - run: brew install ldid xcbeautify
 
@@ -96,7 +96,7 @@ jobs:
           # multi-account feature work fine without the home-screen widget.
           rm -rf "SideStore.xcarchive/Products/Applications/SideStore.app/PlugIns"
           make ipa | tee -a build/logs/build.log
-          cp SideStore.ipa MultiStore-0.6.6-iLoader-v6.ipa
+          cp SideStore.ipa MultiStore-0.6.7-iLoader-v7.ipa
 
       - name: Save Cache
         if: always()
@@ -117,8 +117,8 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: MultiStore-0.6.6-iLoader-v6.ipa
-          path: MultiStore-0.6.6-iLoader-v6.ipa
+          name: MultiStore-0.6.7-iLoader-v7.ipa
+          path: MultiStore-0.6.7-iLoader-v7.ipa
 
   unit-tests:
     name: Unit tests (DataStructures plan)
@@ -136,8 +136,8 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Apply LocalDevVPN peer compatibility fix
-        run: git -C Dependencies/minimuxer apply ../../Patches/minimuxer-localdevvpn-peer.patch
+      - name: Apply LocalDevVPN and install diagnostics fixes
+        run: git -C Dependencies/minimuxer apply ../../Patches/minimuxer-v7-install-diagnostics.patch
 
       - run: brew install ldid xcbeautify
 
