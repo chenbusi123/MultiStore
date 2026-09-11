@@ -558,25 +558,33 @@ final class AuthenticationOperation: ResultOperation<(ALTTeam, ALTCertificate?, 
     private func fetchCertificate(for team: ALTTeam, session: ALTAppleAPISession) async throws -> ALTCertificate {
         let certificates = try await ALTAppleAPI.shared.fetchCertificates(for: team, session: session)
         self.activeCertificates = certificates
+
+        let embeddedCertificateID = Bundle.main.object(forInfoDictionaryKey: Bundle.Info.certificateID) as? String
+        let embeddedCertificateExists = FileManager.default.fileExists(atPath: Bundle.main.certificateURL.path)
+        debugLog("[CertificateBootstrap] remote=\(certificates.count) keychain=\(self.localSigningCertificate() != nil) embeddedID=\(embeddedCertificateID != nil) embeddedP12=\(embeddedCertificateExists)")
         
         if let localCertificate = self.localSigningCertificate(),
            let certificate = certificates.first(where: { $0.serialNumber == localCertificate.serialNumber }) {
                 localCertificate.machineIdentifier = certificate.machineIdentifier
+                debugLog("[CertificateBootstrap] source=keychain result=matched")
                 return localCertificate
         }
         
-        if let serialNumber = Bundle.main.object(forInfoDictionaryKey: Bundle.Info.certificateID) as? String {
+        if let serialNumber = embeddedCertificateID {
             if let certificate = certificates.first(where: { $0.serialNumber == serialNumber }) {
-                let fileExists = FileManager.default.fileExists(atPath: Bundle.main.certificateURL.path)
-                if fileExists,
+                if embeddedCertificateExists,
                    let data = try? Data(contentsOf: Bundle.main.certificateURL) {
                     let machineIdentifier = certificate.machineIdentifier
                     let localCertificate = try? ALTCertificate(p12Data: data, password: machineIdentifier)
                     if let localCertificate = localCertificate {
                         localCertificate.machineIdentifier = machineIdentifier
+                        debugLog("[CertificateBootstrap] source=embeddedP12 result=matched")
                         return localCertificate
                     }
+                    debugLog("[CertificateBootstrap] source=embeddedP12 result=parseFailed")
                 }
+            } else {
+                debugLog("[CertificateBootstrap] source=embeddedID result=remoteCertificateMissing")
             }
         }
         

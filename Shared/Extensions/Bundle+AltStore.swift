@@ -18,11 +18,10 @@ public extension Bundle
         public static let appGroups = "ALTAppGroups"
         public static let altBundleID = "ALTBundleIdentifier"
         public static let storeAppBundleIdentifier =  "com.SideStore.SideStore"
-        // public static var appbundleIdentifier = Bundle.main.bundleIdentifier
-        // Multi-account fork identity: must match the app's actual bundle id (BASE_BUNDLE_ID in
-        // Build.xcconfig) so the keychain namespace, app group and self-refresh detection are
-        // isolated from — and don't collide with — a coexisting SideStore install.
-        public static let appbundleIdentifier = "com.SideStore.MultiStore"
+        // Keep the canonical SideStore identity so iLoader recognises the IPA and injects its
+        // signing certificate/private key. iLoader adds the signing Team ID to the installed
+        // bundle identifier and App Group, preserving cross-account isolation at runtime.
+        public static let appbundleIdentifier = "com.SideStore.SideStore"
 
         public static let devicePairingString = "ALTPairingFile"
         public static let urlTypes = "CFBundleURLTypes"

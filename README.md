@@ -13,7 +13,7 @@ MultiStore is a fork of SideStore that adds support for **multiple Apple IDs**. 
 
 It's aimed at anyone who needs to manage multiple signing identities, teams or certificates from one installation without repeatedly signing out and replacing global credentials.
 
-It uses its own **display name** ("MultiStore") and **bundle identifier** (`com.SideStore.MultiStore`), so it can live **side-by-side with a normal SideStore install** without conflicts.
+It uses the **MultiStore** display name while retaining SideStore's canonical source bundle identifier so iLoader can inject the certificate private key. iLoader appends the signing Team ID during installation, which keeps installations made with different Apple accounts isolated.
 
 Everything SideStore already does still applies — untethered sideloading with just your Apple ID, on-device resigning via a [custom VPN](https://github.com/SideStore/em_proxy) + [minimuxer](https://github.com/SideStore/minimuxer), and automatic background refresh to beat the 7-day expiry. MultiStore extends SideStore with a *multi-account signing layer* while leaving the existing sideloading, refresh, and VPN workflow unchanged.
 
@@ -55,7 +55,7 @@ Each free Personal Team uses seven-day provisioning profiles and is subject to A
 | Per-app signing account | ❌ | ❌ | ✅ |
 | Independent per-account refresh | ❌ | ❌ | ✅ |
 | Failure isolation | ❌ | ❌ | ✅ |
-| Side-by-side install (with SideStore) | ❓ | — | ✅ |
+| Side-by-side install (different signing teams, or LiveContainer host) | ❓ | — | ✅ |
 
 <sub>❓ possible but unverified &nbsp;·&nbsp; — not applicable (installing SideStore beside SideStore makes no sense)</sub>
 
@@ -66,7 +66,7 @@ Each free Personal Team uses seven-day provisioning profiles and is subject to A
 - **Failure isolation** — one account failing never stops the others from refreshing.
 - **Automatic data migration** — updating MultiStore converts any existing single-account data in its *own* store to the multi-account model in place, with no data loss (it does not import a separate SideStore install — see the [FAQ](#faq)).
 - **Minimal account UI** — add / remove / view accounts and their status in Settings, set a default account, and change any app's signing account.
-- **Coexists with SideStore** — distinct bundle identifier, display name, keychain namespace and app group.
+- **Coexists across signing teams** — iLoader's Team-ID suffix gives each account a distinct installed bundle identifier, keychain access group and app group.
 
 Deep dives:
 - [`docs/multi-account/ARCHITECTURE.md`](./docs/multi-account/ARCHITECTURE.md) — how SideStore's single-account assumptions were analyzed.
@@ -159,7 +159,7 @@ Other sideloaders ([Sideloadly](https://sideloadly.io), [AltServer](https://alts
 
 ## Notes & known quirks
 
-- **It still calls itself "SideStore" internally.** Only the Home Screen name and bundle identifier are "MultiStore" (`com.SideStore.MultiStore`). The Xcode scheme, build artifacts (`SideStore.ipa` / `SideStore.app`), the internal product name and various log lines still say "SideStore" — this is intentional, so the build tooling and upstream compatibility stay intact.
+- **It still calls itself "SideStore" internally.** The Home Screen display name is "MultiStore", while the IPA keeps the canonical `com.SideStore.SideStore` source identifier so iLoader recognises it and injects `ALTCertificate.p12`. iLoader adds the signing Team ID to the installed identity. The Xcode scheme, build artifacts (`SideStore.ipa` / `SideStore.app`), internal product name and various log lines still say "SideStore" intentionally.
 - **Secondary accounts never re-sign MultiStore itself.** Certificate validation for the running MultiStore installation is restricted to the team that signed it. Adding or refreshing a secondary account must not show a self-certificate rebase prompt. If a prompt appears while authenticating the original signing account, it indicates a real certificate/profile change for that account.
 - **Anisette `-45054` is server-side.** It means the selected Anisette V3 server failed to access its provisioning files. MultiStore automatically tries the next configured server; if none is available, select another server or repair the self-hosted server's provisioning-data permissions.
 
@@ -181,15 +181,15 @@ No. Personal Team profiles still expire after seven days, and Apple limits a dev
 
 ### Can I use it alongside SideStore?
 
-Yes. MultiStore installs under its own identity (`com.SideStore.MultiStore`), so it coexists with a normal SideStore install without conflicts.
+Yes when they are signed by different Apple Developer teams, because iLoader appends each Team ID to the installed bundle identifier and App Group. It also coexists with LiveContainer + SideStore because LiveContainer is the installed host app. Do not install standalone SideStore and MultiStore with the same signing team: they would resolve to the same installed identity.
 
 ### Can I import my existing SideStore setup?
 
-No — MultiStore is a **separate app** (its own bundle identifier, app group and keychain), so it can't read a stock SideStore install's accounts or apps. Set MultiStore up fresh: add your Apple account(s) and install your apps in it. Your existing SideStore keeps working, untouched and independent.
+No — when installed with its intended separate signing team, MultiStore has its own Team-ID-qualified bundle identifier, App Group and keychain access group, so it can't read another SideStore installation's accounts or apps. Set MultiStore up fresh and add its accounts there.
 
 ### Why doesn't MultiStore import my SideStore data?
 
-iOS isolates every app's sandbox, keychain access groups and app groups. Because MultiStore intentionally uses *different* identifiers so it can coexist with SideStore, iOS won't let it read SideStore's data — that isolation is exactly what makes side-by-side installs possible.
+iOS isolates every app's sandbox, keychain access groups and App Groups. The Team-ID-qualified identities created by iLoader keep MultiStore's data separate from a SideStore installation signed by another team.
 
 ### Why multiple Apple IDs instead of one paid Developer account?
 

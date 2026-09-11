@@ -76,6 +76,12 @@ jobs:
           set -o pipefail && NSUnbufferedIO=YES make -B build \
             2>&1 | tee build/logs/build.log | xcbeautify --renderer github-actions
 
+      - name: Verify iLoader bootstrap identity
+        run: |
+          APP_INFO="SideStore.xcarchive/Products/Applications/SideStore.app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_INFO")" = "com.SideStore.SideStore"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_INFO")" = "MultiStore"
+
       - name: Package IPA
         run: |
           # fakesign + package into an (unsigned) .ipa that can be sideloaded with your own Apple ID.
@@ -87,6 +93,7 @@ jobs:
           # multi-account feature work fine without the home-screen widget.
           rm -rf "SideStore.xcarchive/Products/Applications/SideStore.app/PlugIns"
           make ipa | tee -a build/logs/build.log
+          cp SideStore.ipa MultiStore-0.6.5-iLoader-v5.ipa
 
       - name: Save Cache
         if: always()
@@ -107,8 +114,8 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SideStore-multi-account.ipa
-          path: SideStore.ipa
+          name: MultiStore-0.6.5-iLoader-v5.ipa
+          path: MultiStore-0.6.5-iLoader-v5.ipa
 
   unit-tests:
     name: Unit tests (DataStructures plan)
