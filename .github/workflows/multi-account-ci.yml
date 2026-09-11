@@ -138,6 +138,7 @@ jobs:
 
       - name: Build for testing (DataStructures plan)
         run: |
+          make prepare-altsign
           mkdir -p build/logs
           set -o pipefail && NSUnbufferedIO=YES xcodebuild build-for-testing \
             -project AltStore.xcodeproj \

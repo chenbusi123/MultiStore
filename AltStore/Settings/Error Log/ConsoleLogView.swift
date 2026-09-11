@@ -6,6 +6,7 @@
 //  Copyright © 2024 SideStore. All rights reserved.
 //
 import SwiftUI
+import UIKit
 
 @MainActor
 class ConsoleLogViewModel: ObservableObject {
@@ -122,6 +123,7 @@ public struct ConsoleLogView: View {
     @State private var scrollToIndex: Int?
     @State private var showTimestamp: Bool = false
     @State private var fontSize: CGFloat = 12
+    @State private var didCopyLogs: Bool = false
     
     private let resultHighlightColor = Color.orange
     private let resultHighlightOpacity = 0.5
@@ -151,6 +153,14 @@ public struct ConsoleLogView: View {
                            .imageScale(.large)
                    }
                }
+
+                SwiftUI.Button(action: copyAllLogs) {
+                    Image(systemName: didCopyLogs ? "checkmark" : "doc.on.doc")
+                        .foregroundColor(.white)
+                        .imageScale(.large)
+                }
+                .disabled(viewModel.logLines.isEmpty)
+                .accessibilityLabel(didCopyLogs ? "Logs Copied" : "Copy All Logs")
 
                 SwiftUI.Button(action: {
                     fontSize = max(6, fontSize - 1)
@@ -298,6 +308,14 @@ public struct ConsoleLogView: View {
             return String(line[matchRange.upperBound...])
         }
         return line
+    }
+
+    private func copyAllLogs() {
+        UIPasteboard.general.string = viewModel.logLines.joined(separator: "\n")
+        didCopyLogs = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            didCopyLogs = false
+        }
     }
 }
 

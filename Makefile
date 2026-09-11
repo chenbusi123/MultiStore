@@ -1,7 +1,7 @@
 default: build			# default target for the "make" command
 
 SHELL := /bin/bash
-.PHONY: help ios update tvos
+.PHONY: help ios update tvos prepare-altsign
 
 RUBY := $(shell command -v ruby 2>/dev/null)
 HOMEBREW := $(shell command -v brew 2>/dev/null)
@@ -189,13 +189,16 @@ ifneq ($(strip $(BUNDLE_ID_SUFFIX)),)
 COMMON_BUILD_SETTINGS += BUNDLE_ID_SUFFIX=$(BUNDLE_ID_SUFFIX)
 endif
 
-build:
+prepare-altsign:
+	@./scripts/apply-altsign-login-fix.sh
+
+build: prepare-altsign
 	@echo ">>>>>>>>> BUILD_CONFIG is set to '$(BUILD_CONFIG)', Building for $(BUILD_CONFIG) mode! <<<<<<<<<<"
 	@echo ""
 	@xcodebuild archive -archivePath ./SideStore \
 		$(COMMON_BUILD_SETTINGS)
 
-build-and-test:
+build-and-test: prepare-altsign
 	@rm -rf build/tests/test-results.xcresult
 	@echo ">>>>>>>>> BUILD_CONFIG is set to '$(BUILD_CONFIG)', Building for $(BUILD_CONFIG) mode! <<<<<<<<<<"
 	@echo ""
@@ -206,7 +209,7 @@ build-and-test:
     	-enableCodeCoverage YES \
 		$(COMMON_BUILD_SETTINGS)
 
-build-tests:
+build-tests: prepare-altsign
 	@rm -rf build/tests/test-results.xcresult
 	@echo ">>>>>>>>> BUILD_CONFIG is set to '$(BUILD_CONFIG)', Building Tests for $(BUILD_CONFIG) mode! <<<<<<<<<<"
 	@echo ""

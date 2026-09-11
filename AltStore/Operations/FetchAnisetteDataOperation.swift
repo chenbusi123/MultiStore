@@ -18,6 +18,9 @@ class ANISETTE_VERBOSITY: Operation {} // dummy tag iface
 @objc(FetchAnisetteDataOperation)
 final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSocketDelegate, OperationLogging {
 
+    private static let compatibleClientInfo = "<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+    private static let compatibleUserAgent = "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.akd/1.0)"
+
     let context: OperationContext
     var socket: WebSocket!
     
@@ -562,11 +565,18 @@ final class FetchAnisetteDataOperation: ResultOperation<ALTAnisetteData>, WebSoc
         let (data, _) = try await URLSession.shared.data(from: clientInfoURL)
         
         if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: String] {
-            if let clientInfo = json["client_info"] {
+            if let clientInfo = json["client_info"],
+               let userAgent = json["user_agent"] {
                 self.verboseLog("Server is V3")
-                
-                self.clientInfo = clientInfo
-                self.userAgent = json["user_agent"]!
+
+                if clientInfo.contains("com.apple.dt.Xcode") || userAgent.contains("com.apple.dt.Xcode") {
+                    self.clientInfo = Self.compatibleClientInfo
+                    self.userAgent = Self.compatibleUserAgent
+                    self.debugLog("[AnisetteDiagnostic] Replaced legacy Xcode client identity with akd compatibility identity.")
+                } else {
+                    self.clientInfo = clientInfo
+                    self.userAgent = userAgent
+                }
                 self.verboseLog("Client-Info: \(self.clientInfo!)")
                 self.verboseLog("User-Agent: \(self.userAgent!)")
                 
